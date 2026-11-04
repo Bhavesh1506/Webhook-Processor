@@ -16,12 +16,16 @@ def insert_event(database_path: str, event: dict) -> bool:
     connection = connect(database_path)
     try:
         connection.execute(
-            "INSERT INTO events (event_id, payload, status, created_at) VALUES (?, ?, 'received', ?)",
-            (event["event_id"], json.dumps(event, separators=(",", ":")), now()),
+            "INSERT INTO events (event_id, payload, status, occurred_at, created_at) VALUES (?, ?, 'received', ?, ?)",
+            (event["event_id"], json.dumps(event, separators=(",", ":")), event["occurred_at"], now()),
         )
         return True
-    except sqlite3.IntegrityError:
-        return False
+    except sqlite3.IntegrityError as error:
+        # A constraint error can mean more than "duplicate"; only suppress the known event-ID conflict.
+        existing = connection.execute("SELECT 1 FROM events WHERE event_id = ?", (event["event_id"],)).fetchone()
+        if existing:
+            return False
+        raise error
     finally:
         connection.close()
 

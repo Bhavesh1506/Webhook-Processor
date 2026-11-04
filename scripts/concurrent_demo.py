@@ -1,0 +1,54 @@
+"""Send ten identical signed deliveries to a running local webhook service."""
+
+import argparse
+import hashlib
+import hmac
+import json
+import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from uuid import uuid4
+
+
+def request(url: str, body: bytes, signature: str) -> dict:
+    webhook = urllib.request.Request(
+        f"{url}/webhook", body, method="POST", headers={"Content-Type": "application/json", "X-Signature": signature}
+    )
+    with urllib.request.urlopen(webhook) as response:
+        return json.loads(response.read())
+
+
+def metrics(url: str) -> dict:
+    with urllib.request.urlopen(f"{url}/metrics") as response:
+        return json.loads(response.read())
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--url", default="http://127.0.0.1:8000")
+    parser.add_argument("--secret", default="development-secret")
+    arguments = parser.parse_args()
+
+    event = {
+        "event_id": f"demo-{uuid4()}", "type": "payment.captured", "amount": 500,
+        "order_id": f"demo-order-{uuid4()}", "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+    body = json.dumps(event, separators=(",", ":")).encode()
+    signature = hmac.new(arguments.secret.encode(), body, hashlib.sha256).hexdigest()
+    before = metrics(arguments.url)
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        outcomes = list(pool.map(lambda _: request(arguments.url, body, signature)["status"], range(10)))
+
+    for _ in range(20):
+        after = metrics(arguments.url)
+        if after["processed"] == before["processed"] + 1:
+            break
+        time.sleep(0.1)
+    else:
+        after = metrics(arguments.url)
+
+    passed = outcomes.count("accepted") == 1 and outcomes.count("already received") == 9 and after["processed"] == before["processed"] + 1
+    print({"accepted": outcomes.count("accepted"), "duplicates_skipped": outcomes.count("already received"), "processed": after["processed"] - before["processed"]})
+    if not passed:
+        raise SystemExit("Demo failed: inspect the service logs and metrics above.")
