@@ -77,7 +77,7 @@ The exact-once claim is local: the database update is all-or-nothing, like a ban
 
 ## Retry and dead letters
 
-Failures persist `attempts`, `last_error`, and `next_attempt_at`. Backoff is 1, then 2, then 4 seconds. The third failure moves the event to `dead_letters`. SQLite preserves that information across restarts.
+Failures persist `attempts`, `last_error`, and `next_attempt_at`. Retry delays are 1 and 2 seconds. The third failure records a dead letter. SQLite preserves that information across restarts.
 
 ## Run and test
 
@@ -85,10 +85,13 @@ Failures persist `attempts`, `last_error`, and `next_attempt_at`. Backoff is 1, 
 cd "C:\Users\Bhavesh Bohra\OneDrive\Desktop\webhook processor"
 python -m pip install -r requirements.txt
 $env:WEBHOOK_SECRET = "development-secret"
+$env:OPERATOR_TOKEN = "local-demo-operator-token"
 python -m uvicorn app.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000/docs` for Swagger UI.
+
+Startup requires an explicit `WEBHOOK_SECRET`. Use independent, random secrets outside the local demo. Requests to `/metrics` and `/dead-letters` require `Authorization: Bearer <OPERATOR_TOKEN>`; unset operator tokens disable access. Dead letters accept `limit` (1–100) and `offset`. The webhook caps bodies at 64 KiB. Reusing a receipt ID for different content returns 409. Exact redeliveries remain safe while the receipt row is retained.
 
 ```powershell
 python -m pytest -q
@@ -110,9 +113,11 @@ The immediate response is `{"status":"accepted"}`. The worker processes it short
 
 ## Ten concurrent deliveries demonstration
 
-With the server running, execute:
+Run against an isolated local server without other traffic. The demo measures global counters. In the second PowerShell window, use the same values as your local server:
 
 ```powershell
+$env:WEBHOOK_SECRET = "development-secret"
+$env:OPERATOR_TOKEN = "local-demo-operator-token"
 python scripts/concurrent_demo.py
 ```
 
